@@ -106,7 +106,7 @@ long mobj_read(mobj_t *o, long pos, long len, char *buf) {
     while (done < len) {
         long cur = pos + done;
         pframe_t *pf;
-        mobj_find_pframe(o, cur / FRAME_LEN, &pf);
+        mobj_get_pframe(o, cur / FRAME_LEN, &pf);
         if (pf == NULL) {
             break;
         }

@@ -34,7 +34,44 @@ static vnode_ops_t svfs_file_vops = {.read = svfs_read,
  *   - it is your job here to implement both the fields of the svfs_t struct
  *     and the fs_t struct!
  */
+
+ // need to add the following to initialize the fields of svfs_t struct
+static svfs_t svfs_instance;
+static slab_allocator_t svfs_node_allocator;
+
 void svfs_init() {
+    fs_t *fs = &vfs_root_fs;
+
+    fs->fs_ops = &svfs_fsops;
+    list_init(&fs->vnode_list);
+    spinlock_init(&fs->vnode_list_mutex);
+
+    svfs_instance.svfs_fs = fs;
+    spinlock_init(&svfs_instance.svfs_mutex);
+
+    fs->vnode_allocator = &svfs_node_allocator;
+    slab_allocator_init(&svfs_node_allocator, sizeof(svfs_node_t));
+
+    char block[SV_BLOCK_SIZE];
+
+    read_disk_block(SV_SUPER_BLOCK, block);
+    memcpy(&svfs_instance.svfs_super, block, sizeof(svfs_super_t));
+
+    svfs_node_t *root = slab_obj_alloc(svfs_vnode_allocator);
+
+    if (root == NULL) {
+        return;
+    }
+
+    root->vnode.parent = root;
+    root->inode.svi_number = svfs_instance.svfs_super.svs_root_inode;
+
+    svfs_read_vnode(fs, &root->vnode);
+
+    fs->fs_root = &root->vnode;
+    list_link_init(&root->vnode.vn_link, &root->vnode);
+    list_insert_back(&fs->vnode_list, &root->vnode.vn_link);
+
 }
 
 /*
@@ -48,6 +85,47 @@ void svfs_init() {
  *   - think about the distinction between normal file and directory!
  */
 void svfs_read_vnode(fs_t *fs, vnode_t *vn) {
+    if (fs == NULL || vn == NULL || vn->parent == NULL) {
+        return;
+    }
+
+    svfs_node_t *node = (svfs_node_t *) vn->parent;
+    long inode_number = node->inode.svi_number;
+
+    if (inode_number < 1 ||
+        inode_number > svfs_instance.svfs_super.svs_num_inodes) {
+        return;
+    }
+
+    char block[SV_BLOCK_SIZE];
+    read_disk_block(inode_number, block);
+    memcpy(&node->inode, block, sizeof(node->inode));
+
+    vn->vn_fs = fs;
+    vn->vn_len = node->inode.svi_un.svi_size; // not sure about this because what if there is a free node
+
+    // the uploaded svfs_inode_t has no persistent file-type field
+    // this recognizes only the known root directory
+    if (inode_number == svfs_instance.svfs_super.svs_root_inode) {
+        vn->vn_mode = DIRECTORY;
+        vn->vn_ops = &svfs_dir_vops;
+    } else {
+        // temporary assumption, cannot identify other directories
+        vn->vn_mode = REGULAR;
+        vn->vn_ops = &svfs_file_vops;
+    }
+
+    // vnode_mobj_ops is static inside vnode.c, so initialize with the exported wrapper functions instead
+    mobj_ops_t ops = {
+        .read_pframe = vnode_read_pframe,
+        .write_pframe = vnode_write_pframe,
+        .flush_pframe = vnode_flush_pframe
+    };
+
+    mobj_create(&vn->vn_mobj, &ops);
+    vn->vn_mobj.parent = vn;
+    node->dirtied_inode = 0;
+
 }
 
 
@@ -57,7 +135,25 @@ void svfs_read_vnode(fs_t *fs, vnode_t *vn) {
  * TODO: implement me!
  */
 long svfs_check_super(svfs_super_t *super) {
-    return -1;
+    // validate the number of free blocks stored in the superblock
+    if (super->svs_nfree < 0 ||
+        super->svs_nfree > SV_NFBLKS_PER_NODE) {
+        return -1;
+    }
+
+    // validate the root inode number
+    if (super->svs_root_inode < 1 ||
+        super->svs_root_inode > super->svs_num_inodes) {
+        return -1;
+    }
+
+    // validate the free inode pointer (0 means none available)
+    if (super->svs_free_inode < 0 ||
+        super->svs_free_inode > super->svs_num_inodes) {
+        return -1;
+    }
+
+    return 0;
 }
 
 /*
@@ -72,7 +168,34 @@ long svfs_check_super(svfs_super_t *super) {
  *   - where do we find the next available inode after we allocate this inode?
  */
 long svfs_alloc_inode(svfs_t *svfs) {
-    return -1;
+    if (svfs == NULL) {
+        return -1;
+    }
+
+    spinlock_lock(&svfs->svfs_mutex);
+
+    // get the first available inode
+    long inode_num = svfs->svfs_super.svs_free_inode;
+
+    if (inode_num <= 0 || inode_num > svfs->svfs_super.svs_num_inodes) {
+        spinlock_unlock(&svfs->svfs_mutex);
+        return -1;
+    }
+
+    // read the inode to find the next free inode
+    svfs_inode_t inode;
+    char block[SV_BLOCK_SIZE];
+
+    read_disk_block(inode_num, block);
+    memcpy(&inode, block, sizeof(svfs_inode_t));
+
+    // advance the free-inode linked list.
+    svfs->svfs_super.svs_free_inode = inode.svi_un.svi_next_free;
+
+    spinlock_unlock(&svfs->svfs_mutex);
+
+    return 0;
+
 }
 
 /*
@@ -87,7 +210,35 @@ long svfs_alloc_inode(svfs_t *svfs) {
  */
 long svfs_find_dirent(svfs_node_t *dir, const char *name, long namelen,
                       svfs_node_t *ent) {
-    return -1;
+    if (dir == NULL || name == NULL || ent == NULL || namelen <= 0 || namelen > NAME_LEN) {
+        return -1;
+    }
+
+    // search each directory entry
+    for (long pos = 0; pos + sizeof(dirent_t) <= dir->vnode.vn_len; pos += sizeof(dirent_t)) {
+
+        dirent_t entry;
+
+        // read the directory entry from its data blocks
+        if (mobj_read(&dir->vnode.vn_mobj, pos, sizeof(dirent_t), (char *)&entry) != sizeof(dirent_t)) {
+            return -1;
+        }
+
+        // compare filename lengths and contents
+        if (entry.d_ino != 0 && strlen(entry.d_name) == namelen && strncmp(entry.d_name, name, namelen) == 0) {
+
+            // read the inode associated with the matching entry
+            char block[SV_BLOCK_SIZE];
+            read_disk_block(entry.d_ino, block);
+
+            memcpy(&ent->inode, block, sizeof(svfs_inode_t));
+            return 0;
+        }
+    }
+
+    return -1; // entry not found
+
+
 }
 
 /*
@@ -101,7 +252,24 @@ long svfs_find_dirent(svfs_node_t *dir, const char *name, long namelen,
  *   - how do we access data from a svfs_node/vnode?
  */
 long svfs_read(vnode_t *vn, long pos, char *buf, long len) {
-    return -1;
+    if (vn == NULL || buf == NULL || pos < 0 || len < 0) {
+        return -1;
+    }
+
+    // cannot read beyond the end of the file
+    if (pos >= vn->vn_len) {
+        return 0;
+    }
+
+    // limit reading to the remaining file size
+    if (len > vn->vn_len - pos) {
+        len = vn->vn_len - pos;
+    }
+
+    // read bytes through the vnode's memory object
+    long bytes_read = mobj_read(&vn->vn_mobj, pos, len, buf);
+
+    return (bytes_read == len) ? 0 : -1;
 }
 
 /*
