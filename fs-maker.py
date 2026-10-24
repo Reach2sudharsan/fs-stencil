@@ -2,6 +2,7 @@
 from pathlib import Path
 import struct
 
+# sample comment
 
 # disk layout
 BLOCK_SIZE = 4096
