@@ -22,7 +22,7 @@ typedef struct svfs_super {
     long svs_nfree; // current number of free data blocks
 
     long svs_free_blocks[SV_NFBLKS_PER_NODE]; // free block list
-
+ fo
     long svs_root_inode; // pointer to root inode
     long svs_num_inodes; // number of inodes in the system
 
