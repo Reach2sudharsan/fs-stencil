@@ -1,6 +1,9 @@
 #include "svfs.h"
 
 #include "dirent.h"
+#include "slab_allocator.h"
+#include "sys/disk/disk.h"
+#include "util/string.h"
 
 fs_ops_t svfs_fsops = { .fs_init = svfs_init,
                         .read_vnode = svfs_read_vnode};
@@ -57,7 +60,7 @@ void svfs_init() {
     read_disk_block(SV_SUPER_BLOCK, block);
     memcpy(&svfs_instance.svfs_super, block, sizeof(svfs_super_t));
 
-    svfs_node_t *root = slab_obj_alloc(svfs_vnode_allocator);
+    svfs_node_t *root = slab_obj_alloc(svfs_node_allocator);
 
     if (root == NULL) {
         return;
@@ -251,7 +254,7 @@ long svfs_find_dirent(svfs_node_t *dir, const char *name, long namelen,
  *   - where is the data?
  *   - how do we access data from a svfs_node/vnode?
  */
-long svfs_read(vnode_t *vn, long pos, char *buf, long len) {
+long svfs_read(vnode_t *vn, long pos, void *buf, long len) {
     if (vn == NULL || buf == NULL || pos < 0 || len < 0) {
         return -1;
     }
@@ -283,8 +286,51 @@ long svfs_read(vnode_t *vn, long pos, char *buf, long len) {
  *   - where do new data blocks come from?
  *   - where should we put the data relative to the vnode?
  */
-long svfs_write(vnode_t *vn, long pos, const char *buf, long len) {
-    return -1;
+long svfs_write(vnode_t *vn, long pos, const void *buf, long len) {
+    if (vn == NULL || buf == NULL || pos < 0 || len < 0) {
+        return -1;
+    }
+
+    if (pos + len > SV_NDIRECT_BLKS * SV_BLOCK_SIZE) {
+        return -1;
+    }
+
+    svfs_node_t *node = (svfs_node_t *) vn->parent;
+    svfs_super_t *superblock = &svfs_instance.svfs_super;
+
+    // for every page we write, give it a block on disk
+    for (long p = pos / SV_BLOCK_SIZE; p * SV_BLOCK_SIZE < pos + len; p++) {
+        if (node->inode.svi_direct_blocks[p] == 0) {
+            // slots [0, nfree - 2] are free blocks; the last slot is the overflow link
+            if (superblock->svs_nfree <= 1) {
+                return -1; 
+            }
+            node->inode.svi_direct_blocks[p] = superblock->svs_free_blocks[superblock->svs_nfree - 2];
+            superblock->svs_nfree--;
+        }
+    }
+
+    // put the bytes in the file's pages via mobj_write
+    if (mobj_write(&vn->vn_mobj, pos, len, buf) != len) {
+        return -1;
+    }
+
+    // update the length of the file 
+    if (pos + len > vn->vn_len) {
+        vn->vn_len = pos + len;
+        node->inode.svi_un.svi_size = pos + len;
+    }
+
+    // save the inode and superblock, so that the file still exists after a restart
+    char inode_block[SV_BLOCK_SIZE];
+    memcpy(inode_block, &node->inode, sizeof(svfs_inode_t));
+    write_disk_block(node->inode.svi_number, inode_block);
+
+    char super_block[SV_BLOCK_SIZE];
+    memcpy(super_block, superblock, sizeof(svfs_super_t));
+    write_disk_block(SV_SUPER_BLOCK, super_block);
+
+    return 0;
 }
 
 /*
@@ -300,7 +346,48 @@ long svfs_write(vnode_t *vn, long pos, const char *buf, long len) {
  *     mechanisms!
  */
 long svfs_mknod(vnode_t *dir, const char *name, long namelen, vnode_t **out) {
-    return -1;
+    if (dir == NULL || name == NULL || out == NULL || namelen <= 0 || namelen > NAME_LEN) {
+        return -1;
+    }
+
+    long inode_num = svfs_alloc_inode(&svfs_instance);
+    if (inode_num < 0) {
+        return -1;
+    }    
+
+    // create and save new inode 
+    svfs_node_t *node = slab_obj_alloc(svfs_node_allocator);
+    node->inode.svi_un.svi_size = 0;
+    node->inode.svi_number = inode_num;
+    node->inode.svi_count = 1;
+    for (long i = 0; i < SV_NDIRECT_BLKS; i++) {
+        node->inode.svi_direct_blocks[i] = 0;
+    }
+    node->inode.svi_indirect_block = 0;
+    node->inode.svi_mode = REGULAR;
+
+    // save
+    char inode_block[SV_BLOCK_SIZE];
+    memcpy(inode_block, &node->inode, sizeof(svfs_inode_t));
+    write_disk_block(inode_num, inode_block);
+
+    node->vnode.parent = node;
+    svfs_read_vnode(dir->vn_fs, &node->vnode);
+    list_link_init(&node->vnode.vn_link, &node->vnode);
+    list_insert_back(&dir->vn_fs->vnode_list, &node->vnode.vn_link);
+
+    dirent_t entry;
+    entry.d_ino = inode_num;
+    entry.d_off = dir->vn_len + sizeof(dirent_t);
+    strncpy(entry.d_name, name, namelen);
+    entry.d_name[namelen] = '\0';
+
+    if (svfs_write(dir, dir->vn_len, &entry, sizeof(dirent_t)) != 0) {
+        return -1;
+    }
+
+    *out = &node->vnode;
+    return 0;
 }
 
 /*
@@ -316,8 +403,59 @@ long svfs_mknod(vnode_t *dir, const char *name, long namelen, vnode_t **out) {
  *     mechanisms!
  */
 long svfs_mkdir(vnode_t *dir, const char *name, long namelen, vnode_t **out) {
-    return -1;
+    if (dir == NULL || name == NULL || out == NULL || namelen <= 0 || namelen > NAME_LEN) {
+        return -1;
+    }
+
+    long inode_num = svfs_alloc_inode(&svfs_instance);
+    if (inode_num < 0) {
+        return -1;
+    }
+
+    // create and save new inode
+    svfs_node_t *node = slab_obj_alloc(svfs_node_allocator);
+    node->inode.svi_un.svi_size = 0;
+    node->inode.svi_number = inode_num;
+    node->inode.svi_count = 1;
+    for (long i = 0; i < SV_NDIRECT_BLKS; i++) {
+        node->inode.svi_direct_blocks[i] = 0;
+    }
+    node->inode.svi_indirect_block = 0;
+    node->inode.svi_mode = DIRECTORY; 
+
+    // save
+    char inode_block[SV_BLOCK_SIZE];
+    memcpy(inode_block, &node->inode, sizeof(svfs_inode_t));
+    write_disk_block(inode_num, inode_block);
+
+    node->vnode.parent = node;
+    svfs_read_vnode(dir->vn_fs, &node->vnode);
+    list_link_init(&node->vnode.vn_link, &node->vnode);
+    list_insert_back(&dir->vn_fs->vnode_list, &node->vnode.vn_link);
+
+    dirent_t dots[2];
+    dots[0].d_ino = inode_num;
+    dots[0].d_name[0] = '.';
+    dots[1].d_ino = ((svfs_node_t *) dir->parent)->inode.svi_number;
+    dots[1].d_name[0] = '.';
+    dots[1].d_name[1] = '.';
+
+    if (svfs_write(&node->vnode, 0, dots, sizeof(dots)) != 0) {
+        return -1;
+    }
+
+    dirent_t entry;
+    entry.d_ino = inode_num;
+    strncpy(entry.d_name, name, namelen);
+
+    if (svfs_write(dir, dir->vn_len, &entry, sizeof(dirent_t)) != 0) {
+        return -1;
+    }
+
+    *out = &node->vnode;
+    return 0;
 }
+
 
 /*
  * Search for a given entry within a directory. If found, entry is passed back
@@ -331,7 +469,36 @@ long svfs_mkdir(vnode_t *dir, const char *name, long namelen, vnode_t **out) {
  *   - what happens if we can't find the directory?
  */
 long svfs_lookup(vnode_t *dir, const char *name, long namelen, vnode_t **out) {
-    return -1;
+    if (dir == NULL || name == NULL || out == NULL || dir->vn_mode != DIRECTORY) {
+        return -1;
+    }
+
+    // obtain the inode number from the name 
+    svfs_node_t found;
+    if (svfs_find_dirent((svfs_node_t *) dir->parent, name, namelen, &found) != 0) {
+        return -1; // no such name in this directory
+    }
+    long inode_num = found.inode.svi_number;
+
+    // check if the file is already in memory 
+    for (list_link_t *link = dir->vn_fs->vnode_list.head; link != NULL; link = link->next) {
+        vnode_t *vn = (vnode_t *) link->parent;
+        if (((svfs_node_t *) vn->parent)->inode.svi_number == inode_num) {
+            *out = vn;
+            return 0;
+        }
+    }
+
+    svfs_node_t *node = slab_obj_alloc(svfs_node_allocator);
+    node->vnode.parent = node;
+    node->inode.svi_number = inode_num;
+    svfs_read_vnode(dir->vn_fs, &node->vnode);
+
+    list_link_init(&node->vnode.vn_link, &node->vnode);
+    list_insert_back(&dir->vn_fs->vnode_list, &node->vnode.vn_link);
+
+    *out = &node->vnode;
+    return 0;
 }
 
 /*
@@ -345,7 +512,31 @@ long svfs_lookup(vnode_t *dir, const char *name, long namelen, vnode_t **out) {
  *   - what happens if pos is not aligned to the dirent?
  */
 long svfs_readdir(vnode_t *vnode, long pos, dirent_t **d) {
-    return -1;
+    if (vnode == NULL || d == NULL || vnode->vn_mode != DIRECTORY) {
+        return -1;
+    }
+
+    // pos must be the start of an entry
+    if (pos < 0 || pos % sizeof(dirent_t) != 0) {
+        return -1;
+    }
+
+    // pos must not be past the last entry
+    if (pos + sizeof(dirent_t) > vnode->vn_len) {
+        return -1;
+    }
+
+    slab_allocator_t dirent_allocator;
+    slab_allocator_init(&dirent_allocator, sizeof(dirent_t));
+    dirent_t *entry = slab_obj_alloc(dirent_allocator);
+
+    if (mobj_read(&vnode->vn_mobj, pos, sizeof(dirent_t), (char *) entry) != sizeof(dirent_t)) {
+        return -1;
+    }
+    entry->d_off = pos + sizeof(dirent_t); 
+
+    *d = entry;
+    return 0;
 }
 
 /*
@@ -359,7 +550,26 @@ long svfs_readdir(vnode_t *vnode, long pos, dirent_t **d) {
  *   - how do we access these helpers?
  */
 long svfs_read_pframe(vnode_t *vnode, long pagenum, pframe_t **pfp) {
-    return -1;
+    if (vnode == NULL || pfp == NULL || pagenum < 0 || pagenum >= SV_NDIRECT_BLKS) {
+        return -1;
+    }
+
+    svfs_node_t *node = (svfs_node_t *) vnode->parent;
+
+    // find the disk block that holds this page
+    long block = node->inode.svi_direct_blocks[pagenum];
+    if (block == 0) {
+        return -1; // this page has no block on disk
+    }
+
+    slab_allocator_t pframe_allocator;
+    slab_allocator_init(&pframe_allocator, sizeof(pframe_t));
+    pframe_t *pf = slab_obj_alloc(svfs_pframe_allocator);
+    pf->pf_pagenum = pagenum;
+    read_disk_block(block, pf->bytes);
+
+    *pfp = pf;
+    return 0;
 }
 
 /*
@@ -368,5 +578,17 @@ long svfs_read_pframe(vnode_t *vnode, long pagenum, pframe_t **pfp) {
  * TODO: implement me!
  */
 long svfs_write_pframe(vnode_t *vnode, pframe_t *pf) {
-    return -1;
+    if (vnode == NULL || pf == NULL) {
+        return -1;
+    }
+
+    svfs_node_t *node = (svfs_node_t *) vnode->parent;
+
+    long block = node->inode.svi_direct_blocks[pf->pf_pagenum];
+    if (block == 0) {
+        return -1;
+    }
+
+    write_disk_block(block, pf->bytes);
+    return 0;
 }

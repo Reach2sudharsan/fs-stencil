@@ -30,7 +30,7 @@ void mobj_find_pframe(mobj_t *o, long pagenum, pframe_t **pfp) {
     for (list_link_t *link = o->mo_pframes.head; link != NULL; link = link->next) {
         pframe_t *frame = (pframe_t *)(link->parent);
         if (pagenum == frame->pf_pagenum) {
-            *pfp = frame
+            *pfp = frame;
             break;
         }
     }
@@ -66,7 +66,7 @@ void mobj_get_pframe(mobj_t *o, long pagenum, pframe_t **pfp) {
     spinlock_lock(&o->mo_mutex);
     list_link_t *after = o->mo_pframes.head;
 
-    while (after != NULL && ((p_framt_t *) after ->parent)->pf_pagenum < pagenum) {
+    while (after != NULL && ((pframe_t *) after->parent)->pf_pagenum < pagenum) {
         after = after->next;
     }
 
@@ -114,7 +114,7 @@ long mobj_read(mobj_t *o, long pos, long len, char *buf) {
         long off = cur % FRAME_LEN;
         long n = FRAME_LEN - off;
         if (n > len - done) {
-            n = len - done
+            n = len - done;
         }
         memcpy(buf + done, pf->bytes + off, n);
         done += n;
@@ -149,7 +149,7 @@ long mobj_write(mobj_t *o, long pos, long len, const char *buf) {
         long off = cur % FRAME_LEN;
         long n = FRAME_LEN - off;
         if (n > len - done) {
-            n = len - done
+            n = len - done;
         }
         memcpy(pf->bytes + off, buf + done, n);
         done += n;
