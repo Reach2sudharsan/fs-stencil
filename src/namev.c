@@ -91,12 +91,29 @@ long namev_get_child(vnode_t *base, const char *name, long namelen,
  * TODO: implement me!
  */
 long namev_get_parent(vnode_t *base, vnode_t **out) {
-    return -1;
+    return namev_lookup(base, "..", 2, out);
 }
 
 /*
  * TODO: implement me!
  */
 long namev_is_descendent(vnode_t *a, vnode_t *b) {
-    return -1;
+    vnode_t *current = a;
+    while (1) {
+        if (current == b) {
+            return 1; // found 
+        }
+
+        vnode_t *parent = NULL;
+        if (namev_get_parent(current, &parent) < 0) {
+            return 0; // not found 
+        }
+
+        // below checks for root since root's parent is itself 
+        if (parent == current) {
+            return 0; 
+        }
+
+        current = parent;
+    }
 }
