@@ -364,7 +364,7 @@ long svfs_mknod(vnode_t *dir, const char *name, long namelen, vnode_t **out) {
         node->inode.svi_direct_blocks[i] = 0;
     }
     node->inode.svi_indirect_block = 0;
-    node->inode.svi_mode = REGULAR;
+    node->vnode.vn_mode = REGULAR;
 
     // save
     char inode_block[SV_BLOCK_SIZE];
@@ -421,7 +421,7 @@ long svfs_mkdir(vnode_t *dir, const char *name, long namelen, vnode_t **out) {
         node->inode.svi_direct_blocks[i] = 0;
     }
     node->inode.svi_indirect_block = 0;
-    node->inode.svi_mode = DIRECTORY; 
+    node->vnode.vn_mode = DIRECTORY; 
 
     // save
     char inode_block[SV_BLOCK_SIZE];
@@ -564,7 +564,7 @@ long svfs_read_pframe(vnode_t *vnode, long pagenum, pframe_t **pfp) {
 
     slab_allocator_t pframe_allocator;
     slab_allocator_init(&pframe_allocator, sizeof(pframe_t));
-    pframe_t *pf = slab_obj_alloc(svfs_pframe_allocator);
+    pframe_t *pf = slab_obj_alloc(pframe_allocator);
     pf->pf_pagenum = pagenum;
     read_disk_block(block, pf->bytes);
 

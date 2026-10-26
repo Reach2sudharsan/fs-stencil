@@ -12,7 +12,7 @@ long namev_lookup(vnode_t *dir, const char *name, long namelen,
     }
     *out = NULL;
 
-    if (dir->vn_mode != DIRECTORY || dir->vn_ops == NULL || dir->vn_ops->loopup == NULL) {
+    if (dir->vn_mode != DIRECTORY || dir->vn_ops == NULL || dir->vn_ops->lookup == NULL) {
         return -1;
     }
 
@@ -52,7 +52,7 @@ long namev_open(vnode_t *base, const char *path, vnode_t **res_vnode) {
         }
 
         long len = i - start;
-        const chr *component = path + start;
+        const char *component = path + start;
 
         vnode_t *next = NULL;
         long result;
