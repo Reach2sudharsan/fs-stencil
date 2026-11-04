@@ -1,1 +1,24 @@
-Here to ensure test is added to path
+# build the C test programs
+make
+
+# test the filesystem image maker
+make empty-iso
+python3 test/test_fs-maker.py
+
+# test importing a host file, then exporting it again
+make empty-iso
+python3 fs-maker.py
+./bin/test_host-to-sim sample_file.txt
+./bin/test_sim-to-host exported_sample.txt
+cmp sample_file.txt exported_sample.txt
+
+# test path operations
+make empty-iso
+python3 fs-maker.py
+./bin/test_paths
+
+# test persistence across runs and don't reset image between these commands
+make empty-iso
+python3 fs-maker.py
+./bin/test_persist write
+./bin/test_persist

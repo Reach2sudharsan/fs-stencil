@@ -109,14 +109,19 @@ void svfs_read_vnode(fs_t *fs, vnode_t *vn) {
 
     // the uploaded svfs_inode_t has no persistent file-type field
     // this recognizes only the known root directory
-    if (inode_number == svfs_instance.svfs_super.svs_root_inode) {
-        vn->vn_mode = DIRECTORY;
-        vn->vn_ops = &svfs_dir_vops;
-    } else {
-        // temporary assumption, cannot identify other directories
-        vn->vn_mode = REGULAR;
-        vn->vn_ops = &svfs_file_vops;
+    switch (node->inode.svi_type) {
+        case SVFS_INODE_DIRECTORY:
+            vn->vn_mode = DIRECTORY;
+            vn->vn_ops = &svfs_dir_vops;
+            break;
+        case SVFS_INODE_REGULAR:
+            vn->vn_mode = REGULAR;
+            vn->vn_ops = &svfs_file_vops;
+            break;
+        default:
+            return;
     }
+    vn->vn_len = node->inode.svi_un.svi_size;
 
     // vnode_mobj_ops is static inside vnode.c, so initialize with the exported wrapper functions instead
     mobj_ops_t ops = {
@@ -187,17 +192,22 @@ long svfs_alloc_inode(svfs_t *svfs) {
 
     // read the inode to find the next free inode
     svfs_inode_t inode;
-    char block[SV_BLOCK_SIZE];
+    char inode_block[SV_BLOCK_SIZE];
 
-    read_disk_block(inode_num, block);
-    memcpy(&inode, block, sizeof(svfs_inode_t));
+    // read the free-list link stored in the head inode
+    read_disk_block(inode_num, inode_block);
+    memcpy(&inode, inode_block, sizeof(inode));
 
-    // advance the free-inode linked list.
+    // advance the free-inode linked list
     svfs->svfs_super.svs_free_inode = inode.svi_un.svi_next_free;
+
+    char super_block[SV_BLOCK_SIZE] = {0};
+    memcpy(super_block, &svfs->svfs_super, sizeof(svfs->svfs_super));
+    write_disk_block(SV_SUPER_BLOCK, super_block);
 
     spinlock_unlock(&svfs->svfs_mutex);
 
-    return 0;
+    return inode_num;
 
 }
 
@@ -275,6 +285,74 @@ long svfs_read(vnode_t *vn, long pos, void *buf, long len) {
     return (bytes_read == len) ? 0 : -1;
 }
 
+// The below function is a helper function to help with the fact that
+// our file system maker stores a count followed by the remaining free block
+// numbers in the overflow block in the superblock. The allocator in svfs_write
+// should be able to read that list.
+static long svfs_alloc_data_block(svfs_t *svfs) {
+
+    if (svfs == NULL) {
+        return -1;
+    }
+
+    svfs_super_t *super = &svfs->svfs_super;
+    spinlock_lock(&svfs->svfs_mutex);
+
+    // allocate ordinary free-list entries before following the spill pointer
+    if (super->svs_nfree > 1) {
+        long index = super->svs_nfree - 2;
+        long block = super->svs_free_blocks[index];
+        super->svs_nfree--;
+
+        spinlock_unlock(&svfs->svfs_mutex);
+        return block;
+    }
+
+    // the final superblock entry points to the block containing overflow IDs
+    if (super->svs_nfree == 1) {
+        long spill_block = super->svs_free_blocks[SV_NFBLKS_PER_NODE - 1];
+        if (spill_block <= 0) {
+            spinlock_unlock(&svfs->svfs_mutex);
+            return -1;
+        }
+
+        char spill[SV_BLOCK_SIZE];
+        read_disk_block(spill_block, spill);
+
+        long count;
+        memcpy(&count, spill, sizeof(count));
+
+        if (count < 0 ||
+            count > (SV_BLOCK_SIZE / sizeof(long)) - 1) {
+            spinlock_unlock(&svfs->svfs_mutex);
+            return -1;
+        }
+
+        // pop one overflow ID, and save the reduced count for the next allocation
+        if (count > 0) {
+            long block;
+            memcpy(&block, spill + count * sizeof(long), sizeof(block));
+
+            count--;
+            memcpy(spill, &count, sizeof(count));
+            write_disk_block(spill_block, spill);
+
+            spinlock_unlock(&svfs->svfs_mutex);
+            return block;
+        }
+
+        // the spill block is the last free block
+        super->svs_nfree = 0;
+        super->svs_free_blocks[SV_NFBLKS_PER_NODE - 1] = 0;
+
+        spinlock_unlock(&svfs->svfs_mutex);
+        return spill_block;
+    }
+
+    spinlock_unlock(&svfs->svfs_mutex);
+    return -1;
+}
+
 /*
  * Write len bytes from the buffer into the file at position pos. If the write
  * requires more bytes than are currently available, svfs should allocate
@@ -301,12 +379,16 @@ long svfs_write(vnode_t *vn, long pos, const void *buf, long len) {
     // for every page we write, give it a block on disk
     for (long p = pos / SV_BLOCK_SIZE; p * SV_BLOCK_SIZE < pos + len; p++) {
         if (node->inode.svi_direct_blocks[p] == 0) {
-            // slots [0, nfree - 2] are free blocks; the last slot is the overflow link
-            if (superblock->svs_nfree <= 1) {
-                return -1; 
+            long block = svfs_alloc_data_block(&svfs_instance);
+            if (block < 0) {
+                return -1;
             }
-            node->inode.svi_direct_blocks[p] = superblock->svs_free_blocks[superblock->svs_nfree - 2];
-            superblock->svs_nfree--;
+            
+            // last free block could be overflow-list block, which contains allocator metadata
+            char zero_block[SV_BLOCK_SIZE] = {0};
+            write_disk_block(block, zero_block);
+
+            node->inode.svi_direct_blocks[p] = block;
         }
     }
 
@@ -314,6 +396,7 @@ long svfs_write(vnode_t *vn, long pos, const void *buf, long len) {
     if (mobj_write(&vn->vn_mobj, pos, len, buf) != len) {
         return -1;
     }
+    mobj_flush(&vn->vn_mobj);
 
     // update the length of the file 
     if (pos + len > vn->vn_len) {
@@ -360,6 +443,7 @@ long svfs_mknod(vnode_t *dir, const char *name, long namelen, vnode_t **out) {
     node->inode.svi_un.svi_size = 0;
     node->inode.svi_number = inode_num;
     node->inode.svi_count = 1;
+    node->inode.svi_type = SVFS_INODE_REGULAR;
     for (long i = 0; i < SV_NDIRECT_BLKS; i++) {
         node->inode.svi_direct_blocks[i] = 0;
     }
@@ -369,10 +453,31 @@ long svfs_mknod(vnode_t *dir, const char *name, long namelen, vnode_t **out) {
     // save
     char inode_block[SV_BLOCK_SIZE];
     memcpy(inode_block, &node->inode, sizeof(svfs_inode_t));
+
+    printf("before disk write: type=%ld\n", node->inode.svi_type);
+    svfs_inode_t check;
+    memcpy(&check, inode_block, sizeof(check));
+    printf("buffer type=%ld\n", check.svi_type);
+
     write_disk_block(inode_num, inode_block);
 
+    char check_block[SV_BLOCK_SIZE];
+    svfs_inode_t check_inode;
+    read_disk_block(inode_num, check_block);
+    memcpy(&check_inode, check_block, sizeof(check_inode));
+    printf("after disk read: type=%ld\n", check_inode.svi_type);
+
+
     node->vnode.parent = node;
+
     svfs_read_vnode(dir->vn_fs, &node->vnode);
+
+    printf("inode=%ld type=%ld\n", inode_num, node->inode.svi_type);
+    printf("mode=%d ops=%p write=%p\n",
+       node->vnode.vn_mode,
+       (void *)node->vnode.vn_ops,
+       node->vnode.vn_ops ? (void *)node->vnode.vn_ops->write : NULL);
+
     list_link_init(&node->vnode.vn_link, &node->vnode);
     list_insert_back(&dir->vn_fs->vnode_list, &node->vnode.vn_link);
 
@@ -417,6 +522,7 @@ long svfs_mkdir(vnode_t *dir, const char *name, long namelen, vnode_t **out) {
     node->inode.svi_un.svi_size = 0;
     node->inode.svi_number = inode_num;
     node->inode.svi_count = 1;
+    node->inode.svi_type = SVFS_INODE_DIRECTORY;
     for (long i = 0; i < SV_NDIRECT_BLKS; i++) {
         node->inode.svi_direct_blocks[i] = 0;
     }
@@ -430,6 +536,8 @@ long svfs_mkdir(vnode_t *dir, const char *name, long namelen, vnode_t **out) {
 
     node->vnode.parent = node;
     svfs_read_vnode(dir->vn_fs, &node->vnode);
+    node->vnode.vn_mode = DIRECTORY;
+    node->vnode.vn_ops = &svfs_dir_vops;
     list_link_init(&node->vnode.vn_link, &node->vnode);
     list_insert_back(&dir->vn_fs->vnode_list, &node->vnode.vn_link);
 

@@ -6,6 +6,11 @@
 #include "slab_allocator.h"
 #include "sys/disk/disk.h"
 
+#include "dirent.h"
+
+#include "sys/mem/mem.h"
+
+
 #define CHUNK_SIZE 1024
 
 int main(int argc, char **argv) {
@@ -15,6 +20,7 @@ int main(int argc, char **argv) {
     }
 
     // initialize simulated filesystem
+    mem_init();
     slab_init();
 
     if (disk_init() != 0) {
@@ -27,9 +33,33 @@ int main(int argc, char **argv) {
     // find the file previously imported in test 1
     vnode_t *file = NULL;
 
-    if (namev_open(vfs_root_fs.fs_root, "/imported.txt", &file) != 0 ||
+    // if (namev_open(vfs_root_fs.fs_root, "/imported.txt", &file) != 0 ||
+    //     file == NULL) {
+    //     fprintf(stderr, "Failed to find /imported.txt\n");
+    //     return 1;
+    // }
+
+
+    vnode_t *root = vfs_root_fs.fs_root;
+    if (root == NULL) {
+        fprintf(stderr, "root vnode initialization failed\n");
+        return 1;
+    }
+    printf("root length=%ld, dirent size=%zu\n",
+        root->vn_len, sizeof(dirent_t));
+
+    for (long pos = 0; pos + sizeof(dirent_t) <= root->vn_len;
+        pos += sizeof(dirent_t)) {
+        dirent_t entry = {0};
+        long got = mobj_read(&root->vn_mobj, pos, sizeof(entry),
+                            (char *)&entry);
+        printf("pos=%ld read=%ld inode=%ld name='%.*s'\n",
+            pos, got, entry.d_ino, NAME_LEN + 1, entry.d_name);
+    }
+
+    if (svfs_lookup(vfs_root_fs.fs_root, "imported.txt", 12, &file) != 0 ||
         file == NULL) {
-        fprintf(stderr, "Failed to find /imported.txt\n");
+        fprintf(stderr, "Direct lookup failed\n");
         return 1;
     }
 

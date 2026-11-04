@@ -15,6 +15,9 @@
 #define SV_MAX_FILE_BLOCKS (SV_NDIRECT_BLOCKS + SV_NIDIRECT_BLOCKS)
 #define SV_MAX_FILE_SIZE (SV_MAX_FILE_BLOCKS * SV_BLOCK_SIZE)
 #define SV_MAGIC_NO 134
+#define SVFS_INODE_FREE 0
+#define SVFS_INODE_REGULAR 1
+#define SVFS_INODE_DIRECTORY 2
 
 typedef struct svfs_super {
     long svs_magic; // tells a file system to mount that this is a SVFS
@@ -37,6 +40,7 @@ typedef struct svfs_inode {
 
     long svi_number; // inode number
     long svi_count; // number of nodes that refer to this inode
+    long svi_type; // persistent inode type: free, regular file, or directory (wasn't added before)
 
     long svi_direct_blocks[SV_NDIRECT_BLKS]; // pointer to direct blocks
     long svi_indirect_block; // pointer to indirect block

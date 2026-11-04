@@ -7,6 +7,9 @@ import struct
 # disk layout
 BLOCK_SIZE = 4096
 
+DIRENT_SIZE = 48
+entry_size = DIRENT_SIZE
+
 NUM_INODES = 32
 NUM_DATA_BLOCKS = 128
 NUM_BLOCKS = 1 + NUM_INODES + NUM_DATA_BLOCKS
@@ -105,6 +108,7 @@ def write_inode(
     *,
     first_field,
     count,
+    inode_type,
     direct_block_slots,
     indirect_block,
 ):
@@ -119,6 +123,7 @@ def write_inode(
         first_field,
         inode_number,
         count,
+        inode_type,
         *direct_block_slots,
         indirect_block,
     ]
@@ -141,7 +146,8 @@ def write_root_directory(image):
     #   long d_ino
     #   long d_off
     #   char d_name[NAME_LEN + 1]
-    entry_size = 2 * C_LONG.size + NAME_LEN + 1
+    # entry_size = 2 * C_LONG.size + NAME_LEN + 1
+    entry_size = DIRENT_SIZE
 
     entries = [
         (ROOT_INODE, entry_size, "."),
@@ -165,8 +171,9 @@ def initialize_root_inode(image):
     write_inode(
         image,
         ROOT_INODE,
-        first_field=BLOCK_SIZE,  # directory size: one block
+        first_field=2 * entry_size,  # directory size: one block
         count=1,                 # initial reference count
+        inode_type=2,
         direct_block_slots=[
             ROOT_DATA_BLOCK
         ] + [0] * (NUM_DIRECT_BLOCK_SLOTS - 1),
@@ -191,6 +198,7 @@ def initialize_free_inodes(image):
             inode_number,
             first_field=next_free,
             count=0,
+            inode_type=0,
             direct_block_slots=[0] * NUM_DIRECT_BLOCK_SLOTS,
             indirect_block=0,
         )
@@ -264,160 +272,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-# from pathlib import Path
-# import struct
-
-# BLOCK_SIZE = 4096
-# NUM_BLOCKS = 161
-# IMAGE_PATH = Path("sys/empty-fs.iso")
-
-# SV_MAGIC_NO = 134
-
-# SV_SUPER_BLOCK = 0
-# NUM_INODES = 32
-# NUM_FREE_BLOCKS_SLOTS = 30
-# INODE_START_BLOCK = 1
-
-# NUM_DIRECT_BLOCKS_SLOTS = 28
-
-# ROOT_INODE = 1
-# SV_VERSION = 1
-
-# DATA_BLOCK_START_INDEX = NUM_INODES
-
-# C_LONG = struct.Struct("@l")
-
-
-# def write_superblock(
-#     image,
-#     block_number,
-#     *,
-#     free_inode,
-#     nfree,
-#     free_block_slots,
-#     root_inode,
-#     version
-# ):
-#     if len(free_block_slots) != NUM_FREE_BLOCKS_SLOTS:
-#         raise ValueError("Expected exactly 30 free-block slots")
-
-#     values = [
-#         SV_MAGIC_NO,
-#         free_inode,
-#         nfree,
-#         *free_block_slots,
-#         root_inode,
-#         NUM_INODES,
-#         version
-#     ]
-
-#     base = block_number * BLOCK_SIZE
-#     for index, value in enumerate(values):
-#         C_LONG.pack_into(
-#             image,
-#             base + index * C_LONG.size, 
-#             value
-#         )
-
-
-# def write_inode(
-#     image,
-#     inode_number,
-#     *,
-#     un,
-#     number,
-#     count,
-#     direct_block_slots,
-#     indirect_block
-# ):
-
-#     if not 0 <= inode_number < NUM_INODES:
-#         raise ValueError(f"Inode index {inode_number} is out of range")
-
-
-#     if len(direct_block_slots) != NUM_DIRECT_BLOCKS_SLOTS:
-#         raise ValueError("Expected exactly 28 direct-block slots")
-
-#     values = [
-#         un,
-#         number,
-#         count,
-#         *direct_block_slots,
-#         indirect_block
-#     ]
-
-    
-#     base = inode_number * BLOCK_SIZE
-    
-#     for index, value in enumerate(values):
-#         C_LONG.pack_into(
-#             image, 
-#             base + index * C_LONG.size, 
-#             value
-#         )
-
-
-# def main():
-#     image = bytearray(IMAGE_PATH.read_bytes())
-
-#     expected_size = BLOCK_SIZE * NUM_BLOCKS
-
-#     if len(image) != expected_size:
-#         raise ValueError(
-#             f"Expected {expected_size} bytes, but found {len(image)} bytes instead."
-#         )
-#     print(f"Loaded a {len(image)}-byte disk image")
-
-
-#     # create blocks ids
-#     block_ids = list(range(NUM_BLOCKS)) # index 0-160 (total 161 blocks)
-#     superblock_id = block_ids[0] # index 0
-#     inode_ids = block_ids[1:NUM_INODES+1] # index 1-32
-#     data_block_ids = block_ids[NUM_INODES+1:] # index 33-160
-
-#     free_data_blocks = data_block_ids # exclude any block already used by "/"
-#     spill_block = free_data_blocks[29]
-#     superblock_slots = free_data_blocks[:29] + [spill_block]
-#     remaining_blocks = free_data_blocks[30:]
-
-#     # store the remaining block IDs, in the spill block
-
-
-#     superblock_data_blocks = data_block_ids[:NUM_FREE_BLOCKS_SLOTS]
-
-#     # write super block
-#     write_superblock(
-#         image,
-#         superblock_id,
-#         free_inode=1, # inodes are 1-indexed, and first inode is used by "/"
-#         nfree=NUM_FREE_BLOCKS_SLOTS,
-#         free_block_slots=superblock_data_blocks,
-#         root_inode=ROOT_INODE,
-#         version=SV_VERSION,
-#     )
-
-#     # write inodes
-#     for number in range(1, NUM_INODES + 1):
-#         next_free = number + 1 if number < NUM_INODES else 0;
-
-#         write_inode(
-#             image,
-#             number+1,
-#             un=next_free,
-#             number=inode_index,
-#             count=0,
-#             direct_block_slots=[0] * NUM_DIRECT_BLOCKS_SLOTS,
-#             indirect_block=0,
-#         )
-
-
-#     IMAGE_PATH.write_bytes(image)
-#     print(f"Initialized superblock and inodes in {IMAGE_PATH}")
-
-
-
-# if __name__ == "__main__":
-#     main()

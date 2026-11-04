@@ -135,13 +135,14 @@ class TestFilesystemMaker(unittest.TestCase):
         root_fields = read_longs(
             self.image,
             ROOT_INODE,
-            3 + NUM_DIRECT_BLOCK_SLOTS + 1,
+            4 + NUM_DIRECT_BLOCK_SLOTS + 1,
         )
 
         self.assertEqual(root_fields[0], BLOCK_SIZE)
         self.assertEqual(root_fields[1], ROOT_INODE)
         self.assertEqual(root_fields[2], 1)
-        self.assertEqual(root_fields[3], ROOT_DATA_BLOCK)
+        self.assertEqual(root_fields[3], 2)  # directory type
+        self.assertEqual(root_fields[4], ROOT_DATA_BLOCK)
         self.assertEqual(root_fields[-1], 0)
 
         # assumes directory entries are packed without struct padding

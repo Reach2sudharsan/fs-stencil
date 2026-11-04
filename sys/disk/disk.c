@@ -67,24 +67,31 @@ void read_disk_block(long frame_id, char *buf) {
     }
 }
 
+// had to change the write_disk_block function
 void write_disk_block(long frame_id, const char *buf) {
     char disk_name[MAX_DISK_NAME_LEN];
     get_disk_name(disk_name);
 
-    FILE *disk = fopen(disk_name, "w+");
+    // open without truncating; other disk blocks must remain intact
+    // w+ erases entire disk image when it opens it, r+b opens existing image for binary reading and without erasing it
+    // the blocks were also written in binary, not str
+    FILE *disk = fopen(disk_name, "r+b");
     if (!disk) {
         fprintf(stderr, "Could not open disk...\n");
         __builtin_trap();
     }
 
-    // move the cursor to the location in the disk
-    fseek(disk, FRAME_LEN * frame_id, SEEK_SET);
+    if (fseek(disk, FRAME_LEN * frame_id, SEEK_SET) != 0) {
+        fprintf(stderr, "Could not seek in disk...\n");
+        fclose(disk);
+        __builtin_trap();
+    }
 
-    long n = strlen(buf) > FRAME_LEN ? FRAME_LEN : strlen(buf);
-    long bytes_written = 0;
-    long result;
-    while ((result = fwrite(buf, 1, n - bytes_written, disk)) > 0) {
-        bytes_written += result;
+    // disk blocks are binary data, so we need to write the full block, not strlen(buf) bytes
+    if (fwrite(buf, 1, FRAME_LEN, disk) != FRAME_LEN) {
+        fprintf(stderr, "Could not write full disk block...\n");
+        fclose(disk);
+        __builtin_trap();
     }
 
     if (fclose(disk) == EOF) {
@@ -92,3 +99,29 @@ void write_disk_block(long frame_id, const char *buf) {
         __builtin_trap();
     }
 }
+
+// void write_disk_block(long frame_id, const char *buf) {
+//     char disk_name[MAX_DISK_NAME_LEN];
+//     get_disk_name(disk_name);
+
+//     FILE *disk = fopen(disk_name, "w+");
+//     if (!disk) {
+//         fprintf(stderr, "Could not open disk...\n");
+//         __builtin_trap();
+//     }
+
+//     // move the cursor to the location in the disk
+//     fseek(disk, FRAME_LEN * frame_id, SEEK_SET);
+
+//     long n = strlen(buf) > FRAME_LEN ? FRAME_LEN : strlen(buf);
+//     long bytes_written = 0;
+//     long result;
+//     while ((result = fwrite(buf, 1, n - bytes_written, disk)) > 0) {
+//         bytes_written += result;
+//     }
+
+//     if (fclose(disk) == EOF) {
+//         fprintf(stderr, "Error closing disk...\n");
+//         __builtin_trap();
+//     }
+// }

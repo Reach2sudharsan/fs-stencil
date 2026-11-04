@@ -23,7 +23,6 @@ long namev_lookup(vnode_t *dir, const char *name, long namelen,
  * TODO: implement me!
  */
 long namev_open(vnode_t *base, const char *path, vnode_t **res_vnode) {
-
     if (path == NULL || res_vnode == NULL) {
         return -1;
     }
@@ -32,49 +31,46 @@ long namev_open(vnode_t *base, const char *path, vnode_t **res_vnode) {
 
     // absolute paths start at vfs root, and relative paths start at base
     vnode_t *current = (path[0] == '/') ? vfs_root_fs.fs_root : base;
-
     if (current == NULL) {
         return -1;
     }
 
-    long i = 0;
+    const char *p = path;
 
-    while (path[i] != "\0") {
-        if (path[i] == "\0") {
+    while (*p != '\0') {
+        while (*p == '/') {
+            p++;
+        }
+        if (*p == '\0') {
             break;
         }
 
         // find beginning and length of next component (e.g. a folder or filename)
-        long start = i;
 
-        while (path[i] != "\0" || path[i] != "/") {
-            i++;
+        const char *component = p;
+        while (*p != '\0' && *p != '/') {
+            p++;
         }
 
-        long len = i - start;
-        const char *component = path + start;
-
+        long len = p - component;
         vnode_t *next = NULL;
         long result;
 
-        if (len == 1 && component[0] == ".") {
+        if (len == 1 && component[0] == '.') {
             continue;
-        } else if (len == 2 && component[0] == "." && component[1] == ".") {
+        } else if (len == 2 &&
+                   component[0] == '.' && component[1] == '.') {
             result = namev_get_parent(current, &next);
         } else {
             result = namev_get_child(current, component, len, &next);
         }
 
-        // stop if the component doesn't exit
         if (result < 0 || next == NULL) {
             return -1;
         }
-
         current = next;
-
-
-
     }
+
     *res_vnode = current;
     return 0;
 }

@@ -24,6 +24,7 @@ int main(int argc, char **argv) {
     }
 
     // initialize simulated filesystem
+    mem_init();
     slab_init();
 
     if (disk_init() != 0) {
@@ -59,11 +60,23 @@ int main(int argc, char **argv) {
     long offset = 0;
 
     while ((n = fread(buffer, 1, sizeof(buffer), host)) > 0) {
-        if (file->vn_ops == NULL || file->vn_ops->write == NULL ||
-            file->vn_ops->write(file, offset, buffer, (long)n) != 0) {
-            fprintf(stderr, "Simulated write failed at offset %ld\n",
-                    offset);
-            fclose(host);
+        // if (file->vn_ops == NULL || file->vn_ops->write == NULL ||
+        //     file->vn_ops->write(file, offset, buffer, (long)n) != 0) {
+        //     fprintf(stderr, "Simulated write failed at offset %ld\n",
+        //             offset);
+        //     fclose(host);
+        //     return 1;
+        // }
+        
+        if (file->vn_ops == NULL || file->vn_ops->write == NULL) {
+            fprintf(stderr, "missing write op: mode=%d, ops=%s\n",
+                    file->vn_mode, file->vn_ops ? "set" : "NULL");
+            return 1;
+        }
+
+        long result = file->vn_ops->write(file, offset, buffer, (long)n);
+        if (result != 0) {
+            fprintf(stderr, "write op returned %ld at offset %ld\n", result, offset);
             return 1;
         }
 
