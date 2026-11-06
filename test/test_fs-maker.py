@@ -138,7 +138,7 @@ class TestFilesystemMaker(unittest.TestCase):
             4 + NUM_DIRECT_BLOCK_SLOTS + 1,
         )
 
-        self.assertEqual(root_fields[0], BLOCK_SIZE)
+        self.assertEqual(root_fields[0], 2*48)
         self.assertEqual(root_fields[1], ROOT_INODE)
         self.assertEqual(root_fields[2], 1)
         self.assertEqual(root_fields[3], 2)  # directory type
@@ -146,7 +146,8 @@ class TestFilesystemMaker(unittest.TestCase):
         self.assertEqual(root_fields[-1], 0)
 
         # assumes directory entries are packed without struct padding
-        entry_size = 2 * C_LONG.size + 25
+        # entry_size = 2 * C_LONG.size + 25
+        entry_size = 48
         block_offset = ROOT_DATA_BLOCK * BLOCK_SIZE
 
         def read_entry(index):

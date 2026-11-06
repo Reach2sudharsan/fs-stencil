@@ -4,11 +4,10 @@
 #include "util/string.h"
 
 /*
- * TODO: implement me!
+ * initialize a new mobj
  *
- * Hints:
- *   - when we write the ops, we want to make sure that we copy the value
- *     of the parameters into the space that we've been provided
+ * when we write the ops, we want to make sure that we copy the value
+ * of the parameters into the space that we've been provided
  */
 void mobj_create(mobj_t *o, mobj_ops_t *ops) {
     o->mo_ops = *ops;
@@ -17,11 +16,10 @@ void mobj_create(mobj_t *o, mobj_ops_t *ops) {
 }
 
 /*
- * TODO: implement me!
+ * find a pframe that is already in the mobj
  *
- * Hints:
- *   - in this function, where do we search for frame?
- *   - if we don't find the frame, set the pfp to NULL
+ * in this function, where do we search for frame?
+ * if we don't find the frame, set the pfp to NULL
  */
 void mobj_find_pframe(mobj_t *o, long pagenum, pframe_t **pfp) {
     *pfp = NULL;
@@ -39,12 +37,11 @@ void mobj_find_pframe(mobj_t *o, long pagenum, pframe_t **pfp) {
 }
 
 /*
- * TODO: implement me!
+ * get a pframe, or read it from disk if it isn't loaded yet
  *
- * Hints:
- *   - the frame might be in our list already...
- *   - we have access to a function to read the pframe from disk!
- *   - check how we get data from disk in sys/disk/disk.{h,c}...
+ * the frame might be in our list already...
+ * we have access to a function to read the pframe from disk!
+ * check how we get data from disk in sys/disk/disk.{h,c}...
  */
 void mobj_get_pframe(mobj_t *o, long pagenum, pframe_t **pfp) {
     // is it already in memory?
@@ -89,13 +86,12 @@ void mobj_get_pframe(mobj_t *o, long pagenum, pframe_t **pfp) {
 }
 
 /*
- * TODO: implement me!
+ * read bytes from the mobj into buf
  *
- * Hints:
- *   - pos describes where to read from in terms of bytes
- *   - len is the maximum number of bytes to read... when can we not read all
- *     of the way up to len?
- *   - save what we read to buf
+ * pos describes where to read from in terms of bytes
+ * len is the maximum number of bytes to read... when can we not read all
+ * of the way up to len?
+ * save what we read to buf
  */
 long mobj_read(mobj_t *o, long pos, long len, char *buf) {
     if (pos <0 || len < 0 || buf == NULL) {
@@ -124,13 +120,12 @@ long mobj_read(mobj_t *o, long pos, long len, char *buf) {
 }
 
 /*
- * TODO: implement me!
+ * write bytes from buf into the mobj
  *
- * Hints:
- *   - pos describes where to write to in terms of bytes
- *   - len is the maximum number of bytes to write... when can we not read all
- *     of the way up to len?
- *   - save what we read to buf
+ * pos describes where to write to in terms of bytes
+ * len is the maximum number of bytes to write... when can we not read all
+ * of the way up to len?
+ * save what we read to buf
  */
 long mobj_write(mobj_t *o, long pos, long len, const char *buf) {
         if (pos <0 || len < 0 || buf == NULL) {
@@ -158,10 +153,9 @@ long mobj_write(mobj_t *o, long pos, long len, const char *buf) {
 }
 
 /*
- * TODO: implement me!
+ * write the mobj's pframes back to disk
  *
- * Hints:
- *   - make sure that disk is up to date in the places that we care about!
+ * make sure that disk is up to date in the places that we care about!
  */
 void mobj_flush(mobj_t *o) {
     // write_pframe, not flush_pframe: svfs sets flush_pframe to NULL

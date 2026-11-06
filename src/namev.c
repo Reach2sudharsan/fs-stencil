@@ -2,7 +2,7 @@
 #include "vnode.h"
 
 /*
- * TODO: implement me!
+ * look up a name in a directory
  */
 long namev_lookup(vnode_t *dir, const char *name, long namelen,
                   vnode_t **out) {
@@ -20,7 +20,7 @@ long namev_lookup(vnode_t *dir, const char *name, long namelen,
 }
 
 /*
- * TODO: implement me!
+ * find the vnode for a path
  */
 long namev_open(vnode_t *base, const char *path, vnode_t **res_vnode) {
     if (path == NULL || res_vnode == NULL) {
@@ -76,7 +76,7 @@ long namev_open(vnode_t *base, const char *path, vnode_t **res_vnode) {
 }
 
 /*
- * TODO: implement me!
+ * get a directory's child by name
  */
 long namev_get_child(vnode_t *base, const char *name, long namelen,
                      vnode_t **out) {
@@ -84,14 +84,14 @@ long namev_get_child(vnode_t *base, const char *name, long namelen,
 }
 
 /*
- * TODO: implement me!
+ * get a directory's parent
  */
 long namev_get_parent(vnode_t *base, vnode_t **out) {
     return namev_lookup(base, "..", 2, out);
 }
 
 /*
- * TODO: implement me!
+ * check whether a is inside b
  */
 long namev_is_descendent(vnode_t *a, vnode_t *b) {
     vnode_t *current = a;

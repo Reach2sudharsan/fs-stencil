@@ -29,13 +29,12 @@ static vnode_ops_t svfs_file_vops = {.read = svfs_read,
                                      .flush_pframe = NULL};
 
 /*
- * TODO: implement me!
+ * set up the file system and load the root directory
  *
- * Hints:
- *   - what is the main file system reference? how should our svfs instance
- *     refer to this main system?
- *   - it is your job here to implement both the fields of the svfs_t struct
- *     and the fs_t struct!
+ * what is the main file system reference? how should our svfs instance
+ * refer to this main system?
+ * it is your job here to implement both the fields of the svfs_t struct
+ * and the fs_t struct!
  */
 
  // need to add the following to initialize the fields of svfs_t struct
@@ -80,12 +79,9 @@ void svfs_init() {
 /*
  * Initialize a svfs_node/vnode after reading a file from disk.
  *
- * TODO: implement me!
- *
- * Hints:
- *   - how do we get data from disk?
- *   - what should the svfs_node/vnode fields be for a given file?
- *   - think about the distinction between normal file and directory!
+ * how do we get data from disk?
+ * what should the svfs_node/vnode fields be for a given file?
+ * think about the distinction between normal file and directory!
  */
 void svfs_read_vnode(fs_t *fs, vnode_t *vn) {
     if (fs == NULL || vn == NULL || vn->parent == NULL) {
@@ -139,8 +135,6 @@ void svfs_read_vnode(fs_t *fs, vnode_t *vn) {
 
 /*
  * Check the super block. Return 0 on success, else -1
- *
- * TODO: implement me!
  */
 long svfs_check_super(svfs_super_t *super) {
     // validate the number of free blocks stored in the superblock
@@ -169,11 +163,8 @@ long svfs_check_super(svfs_super_t *super) {
  * file. Choose an unused inode from the file system. Returns 0 on succes,
  * -1 on failure.
  *
- * TODO: implement me!
- *
- * Hints:
- *   - what is the next available inode?
- *   - where do we find the next available inode after we allocate this inode?
+ * what is the next available inode?
+ * where do we find the next available inode after we allocate this inode?
  */
 long svfs_alloc_inode(svfs_t *svfs) {
     if (svfs == NULL) {
@@ -216,10 +207,7 @@ long svfs_alloc_inode(svfs_t *svfs) {
  * pass the associated svfs_node/vnode to the ent pointer. Return 0 on success,
  * else -1.
  *
- * TODO: implement me!
- *
- * Hints:
- *   - how should we read a directory entry?
+ * how should we read a directory entry?
  */
 long svfs_find_dirent(svfs_node_t *dir, const char *name, long namelen,
                       svfs_node_t *ent) {
@@ -258,11 +246,8 @@ long svfs_find_dirent(svfs_node_t *dir, const char *name, long namelen,
  * Read len bytes from the file associated with the vnode_t from position pos
  * and save the result into the buffer. Return 0 on success, -1 on failure.
  *
- * TODO: implement me!
- *
- * Hints:
- *   - where is the data?
- *   - how do we access data from a svfs_node/vnode?
+ * where is the data?
+ * how do we access data from a svfs_node/vnode?
  */
 long svfs_read(vnode_t *vn, long pos, void *buf, long len) {
     if (vn == NULL || buf == NULL || pos < 0 || len < 0) {
@@ -358,11 +343,8 @@ static long svfs_alloc_data_block(svfs_t *svfs) {
  * requires more bytes than are currently available, svfs should allocate
  * another data block to the file. Returns 0 on success, else -1.
  *
- * TODO: implement me!
- *
- * Hints:
- *   - where do new data blocks come from?
- *   - where should we put the data relative to the vnode?
+ * where do new data blocks come from?
+ * where should we put the data relative to the vnode?
  */
 long svfs_write(vnode_t *vn, long pos, const void *buf, long len) {
     if (vn == NULL || buf == NULL || pos < 0 || len < 0) {
@@ -422,11 +404,8 @@ long svfs_write(vnode_t *vn, long pos, const void *buf, long len) {
  * the provided name and passes the newly created vnode to the out parameter.
  * Returns 0 on success, -1 on failure.
  *
- * TODO: implement me!
- *
- * Hints:
- *   - don't forget to add the newly created vnode to any global tracking
- *     mechanisms!
+ * don't forget to add the newly created vnode to any global tracking
+ * mechanisms!
  */
 long svfs_mknod(vnode_t *dir, const char *name, long namelen, vnode_t **out) {
     if (dir == NULL || name == NULL || out == NULL || namelen <= 0 || namelen > NAME_LEN) {
@@ -501,11 +480,8 @@ long svfs_mknod(vnode_t *dir, const char *name, long namelen, vnode_t **out) {
  * the newly created vnode to the out parameter.  Returns 0 on success, -1 on
  * failure.
  *
- * TODO: implement me!
- *
- * Hints:
- *   - don't forget to add the newly created vnode to any global tracking
- *     mechanisms!
+ * don't forget to add the newly created vnode to any global tracking
+ * mechanisms!
  */
 long svfs_mkdir(vnode_t *dir, const char *name, long namelen, vnode_t **out) {
     if (dir == NULL || name == NULL || out == NULL || namelen <= 0 || namelen > NAME_LEN) {
@@ -544,9 +520,11 @@ long svfs_mkdir(vnode_t *dir, const char *name, long namelen, vnode_t **out) {
     dirent_t dots[2];
     dots[0].d_ino = inode_num;
     dots[0].d_name[0] = '.';
+    dots[0].d_name[1] = '\0';
     dots[1].d_ino = ((svfs_node_t *) dir->parent)->inode.svi_number;
     dots[1].d_name[0] = '.';
     dots[1].d_name[1] = '.';
+    dots[1].d_name[2] = '\0';
 
     if (svfs_write(&node->vnode, 0, dots, sizeof(dots)) != 0) {
         return -1;
@@ -555,6 +533,7 @@ long svfs_mkdir(vnode_t *dir, const char *name, long namelen, vnode_t **out) {
     dirent_t entry;
     entry.d_ino = inode_num;
     strncpy(entry.d_name, name, namelen);
+    entry.d_name[namelen] = '\0';
 
     if (svfs_write(dir, dir->vn_len, &entry, sizeof(dirent_t)) != 0) {
         return -1;
@@ -569,12 +548,9 @@ long svfs_mkdir(vnode_t *dir, const char *name, long namelen, vnode_t **out) {
  * Search for a given entry within a directory. If found, entry is passed back
  * via the out pointer. Returns 0 on success, -1 on failure.
  *
- * TODO: implement me!
- *
- * Hints:
- *   - recall that the data in a directory is a series of dirents (defined in
- *     dirent.h)
- *   - what happens if we can't find the directory?
+ * recall that the data in a directory is a series of dirents (defined in
+ * dirent.h)
+ * what happens if we can't find the directory?
  */
 long svfs_lookup(vnode_t *dir, const char *name, long namelen, vnode_t **out) {
     if (dir == NULL || name == NULL || out == NULL || dir->vn_mode != DIRECTORY) {
@@ -613,11 +589,8 @@ long svfs_lookup(vnode_t *dir, const char *name, long namelen, vnode_t **out) {
  * Retrieve the directory entry at the location specified by pos in the
  * provided directory. Return 0 on success, -1 on failure.
  *
- * TODO: implement me!
- *
- * Hints:
- *   - index the data associated with the directory
- *   - what happens if pos is not aligned to the dirent?
+ * index the data associated with the directory
+ * what happens if pos is not aligned to the dirent?
  */
 long svfs_readdir(vnode_t *vnode, long pos, dirent_t **d) {
     if (vnode == NULL || d == NULL || vnode->vn_mode != DIRECTORY) {
@@ -651,11 +624,8 @@ long svfs_readdir(vnode_t *vnode, long pos, dirent_t **d) {
  * Read the data associated with a file from disk. Return 0 on success, -1 on
  * error.
  *
- * TODO: implement me!
- *
- * Hints:
- *   - are there helper functions that can help us out?
- *   - how do we access these helpers?
+ * are there helper functions that can help us out?
+ * how do we access these helpers?
  */
 long svfs_read_pframe(vnode_t *vnode, long pagenum, pframe_t **pfp) {
     if (vnode == NULL || pfp == NULL || pagenum < 0 || pagenum >= SV_NDIRECT_BLKS) {
@@ -682,8 +652,6 @@ long svfs_read_pframe(vnode_t *vnode, long pagenum, pframe_t **pfp) {
 
 /*
  * Write pframe to disk. Return 0 on success, -1 on error.
- *
- * TODO: implement me!
  */
 long svfs_write_pframe(vnode_t *vnode, pframe_t *pf) {
     if (vnode == NULL || pf == NULL) {
